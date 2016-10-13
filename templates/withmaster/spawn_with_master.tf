@@ -41,8 +41,11 @@ resource "openstack_compute_instance_v2" "salt-master" {
         "zypper ref",
         "zypper --non-interactive --no-gpg-checks in salt-master",
         "zypper --non-interactive --no-gpg-checks in salt-minion",
+        "echo \"master: ${join(" ", openstack_compute_instance_v2.salt-master.*.network.0.fixed_ip_v4)} \" > /etc/salt/minion.d/minion.conf",
         "systemctl enable salt-master.service",
+        "systemctl enable salt-minion.service",
         "systemctl start salt-master.service"
+        "systemctl start salt-minion.service"
         ]
         connection {
             type = "ssh"
