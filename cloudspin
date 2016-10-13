@@ -1,0 +1,290 @@
+#!/bin/bash 
+
+CONFIGPATH=${HOME}/.cloudspin/templates
+if [ -d /etc/cloudspin/templates/ ]; then
+    DEFAULT_CONFIG_PATH=/etc/cloudspin/templates
+else
+    DEFAULT_CONFIG_PATH=templates/
+fi
+CLOUDSPIN_RC_PATH=${HOME}/.cloudspinrc
+
+check_for_update() {
+    diff -r --exclude="*.tfstate*" $DEFAULT_CONFIG_PATH $CONFIGPATH
+    if [ $? != 0 ]; then
+        echo "Found newer config files."
+        echo "Replacing.."
+        cp -a $DEFAULT_CONFIG_PATH/** $CONFIGPATH/
+        echo "Done."
+    fi
+}
+
+parse_openrc() {
+   if [ -f "$CLOUDSPIN_RC_PATH" ]; then
+        echo "Found a openrc file. Will process that."
+        local IFS="="
+        while read -r name value
+        do
+            echo "Found $name : Setting to $value"
+            case $name in
+                OS_USERNAME) export OS_USERNAME="$value";;
+                OS_PASSWORD) export OS_PASSWORD="$value";;
+                OS_TENANT_NAME) export OS_TENANT_NAME="$value";;
+                OS_TENANT_ID) export OS_TENANT_ID="$value";;
+                KEY_PAIR) export KEY_PAIR="$value";;
+                OS_REGION_NAME) export OS_REGION_NAME="$value";;
+                OS_AUTH_URL) export OS_AUTH_URL="$value";;
+            esac
+        done < $CLOUDSPIN_RC_PATH 
+        echo -e "\n"
+   else
+       echo "No openrc file found in ${CLOUDSPIN_RC_PATH}"
+   fi
+}
+
+check_requirements() {
+    [ ! -e "/usr/bin/terraform" ] && echo "Terraform is not installed" && exit 1
+    if [ "$(id -u)" = "0" ]; then
+       echo "This script must not be run as root" 1>&2
+       exit 1
+    fi
+    if [ ! -d "$CONFIGPATH" ]; then
+        echo "You don't have $CONFIGPATH set."
+        read -r -p "Want to copy over the files now? [y/N] " response
+        if [[ $response =~ ^([yY][eE][sS]|[yY])$ ]]; then
+            setup
+        else
+            echo "No config files found. Exiting.."
+            exit 1
+        fi
+    fi
+    parse_openrc
+    : "${OS_USERNAME:?Please set OS_USERNAME.}"
+    : "${OS_PASSWORD:?Please set OS_PASSWORD.}"
+    check_for_update
+}
+
+setup() {
+    mkdir -p $CONFIGPATH
+    cp -a $DEFAULT_CONFIG_PATH/** $CONFIGPATH
+    if [ "$?" = 0 ]; then
+        echo "Copied .tf files to $CONFIGPATH"
+        echo "Ready to go."
+        exit 0
+    else
+        echo "Error. Contact the maintainer of this package."
+        exit 1
+    fi
+}
+
+output_ips() {
+    pushd "${CONFIGPATH}/nomaster/"
+    /usr/bin/terraform output
+    popd
+    pushd "${CONFIGPATH}/withmaster/"
+    /usr/bin/terraform output
+    popd
+    exit 0
+}
+
+usage() { 
+    echo "Spin up a customizable cluster with Salt preinstalled." 
+    echo -e "\nUsage:\n$0 [arguments] \n" 
+    echo -e "\t--salt-master <> Provide IP/Hostname if you already have a salt-master \n"
+    echo -e "\t--minion-count <> The number of minions you want to spawn : defaults to 3 \n"
+    echo -e "\t--flavor-name-master <> Openstack Image Flavor for the master : defaults to d2.small \n"
+    echo -e "\t--flavor-name-minion <> Openstack Image Flavor for the minion : defaults to d2.small \n"
+    echo -e "\t--image-name <> OpenStack Image Name : defaults to SP1 \n"
+    echo -e "\t--list-os <> Lists all the available options \n"
+    echo -e "\t--login-user <> Specify the login user for the initial ssh connection: defaults to root \n"
+    echo -e "\t--login-password <> Specify the login password for the initial ssh connection: defaults to linux \n"
+    echo -e "\t--auth-url <> Specify the auth-url for the horizon dashboard : defaults to cloud.suse.de \n"
+    echo -e "\t--tenant-name <> Tenant name for the horizon dashboard: defaults to ses : \n"
+    echo -e "\t--key-pair <> The keypair you want to use to deploy the vms : defaults to ci-jenkins \n"
+    echo -e "\t--node-name <> Name your machines: defaults to ses-devnode and salt-master \n"
+    echo -e "\t--destroy <> Destroy all machines \n"
+    echo -e "\t--output-ips <> Display IPs of your running VMs \n"
+    echo -e "\t--help <> Displays this message"
+} 
+
+destroy() {
+    parse_openrc
+    echo "Destroy flag is set.. Destroying"
+    pushd "${CONFIGPATH}/nomaster/"
+    SALT_MASTER="Dummy"
+    terraform destroy `vars_without_master`
+    popd
+    pushd "${CONFIGPATH}/withmaster/"
+    terraform destroy `vars_with_master`
+    popd
+    exit 1
+}
+
+vars_with_master() {
+    echo " -var flavor_name_master=${FLAVOR_NAME_MASTER} "
+    echo " -var flavor_name_minion=${FLAVOR_NAME_MINION} "
+    echo " -var minion_count=${MINION_COUNT} "
+    echo " -var key_pair=${KEY_PAIR} "
+    echo " -var image_name=${IMAGE_NAME} "
+    echo " -var saltstack_repo=${SALTSTACK_REPO} "
+    echo " -var auth_url=${AUTH_URL} "
+    echo " -var login_user=${LOGIN_USER} "
+    echo " -var login_password=${LOGIN_PASSWORD}"
+    echo " -var tenant_name=${TENANT_NAME} "
+    echo " -var name=${NODE_NAME}"
+}
+
+vars_without_master() {
+    echo " -var salt_master=${SALT_MASTER} "
+    echo " -var flavor_name_master=${FLAVOR_NAME_MASTER} "
+    echo " -var flavor_name_minion=${FLAVOR_NAME_MINION} "
+    echo " -var minion_count=${MINION_COUNT} "
+    echo " -var key_pair=${KEY_PAIR} "
+    echo " -var image_name=${IMAGE_NAME} "
+    echo " -var saltstack_repo=${SALTSTACK_REPO} "
+    echo " -var auth_url=${AUTH_URL} "
+    echo " -var login_user=${LOGIN_USER} "
+    echo " -var login_password=${LOGIN_PASSWORD}"
+    echo " -var tenant_name=${TENANT_NAME} "
+    echo " -var name=${NODE_NAME}"
+}
+
+
+select_salt_repo() {
+        case $IMAGE_NAME in
+            "SLES12-SP0")
+            SALTSTACK_REPO="http://download.opensuse.org/repositories/systemsmanagement:/saltstack/SLE_12/"
+            ;;
+            "SLES12-SP1")
+            SALTSTACK_REPO="http://download.opensuse.org/repositories/systemsmanagement:/saltstack/SLE_12_SP1/"
+            ;;
+            "SLES12-SP2")
+            SALTSTACK_REPO="http://download.opensuse.org/repositories/systemsmanagement:/saltstack/SLE_12_SP1/"
+            ;;
+            "openSUSE-Leap-42.1-OpenStack-Updated-2006-05-10")
+            SALTSTACK_REPO=dunno
+            ;;
+            *)
+            echo "Could not find a valid image. Exiting"
+            exit 1
+            ;; 
+        esac
+}
+
+set_defaults() {
+    echo "Setting defaults if no arguments were provided."
+    FLAVOR_NAME_MASTER=${FLAVOR_NAME_MASTER:-d2.small}
+    FLAVOR_NAME_MINION=${FLAVOR_NAME_MINION:-d2.small}
+    NODE_NAME=${NODE_NAME:-ses-devnode}
+    AUTH_URL=${OS_AUTH_URL:-"NOT DEFINED: PLEASE DEFINE"}
+    TENANT_NAME=${OS_TENANT_NAME:-ses}
+    TENANT_ID=${OS_TENANT_ID:-dummytenant}
+    LOGIN_USER=${LOGIN_USER:-root}
+    LOGIN_PASSWORD=${LOGIN_PASSWORD:-linux}
+    SALT_MASTER=${SALT_MASTER:-""}
+    MINION_COUNT=${MINION_COUNT:-\"3\"}
+    KEY_PAIR=${KEY_PAIR:-defaultkeypair}
+    FLAVOR=${FLAVOR:-d2.small}
+    IMAGE_NAME=${IMAGE_NAME:-defaultimage}
+    select_salt_repo
+    [ "${SALT_MASTER}" ] && echo "SALT_MASTER IP/Hostname is set to: ${SALT_MASTER})"
+    echo "Minion count is set to: ${MINION_COUNT}"
+    echo "Using salt repo ${SALTSTACK_REPO}"
+    echo "Using minion flavor: ${FLAVOR_NAME_MINION}"
+    echo "Using master flavor: ${FLAVOR_NAME_MASTER}"
+    echo "Using keypair: ${KEY_PAIR}"
+    echo "Using image: ${IMAGE_NAME}"
+    echo "Using tenant: ${OS_TENANT_NAME}"
+    echo "Using username: ${OS_USERNAME}"
+    echo "Using password: ${OS_PASSWORD}"
+    echo "Using auth url: ${OS_AUTH_URL}" 
+    echo "Nodes will appear under the name: ${NODE_NAME}"
+}
+
+while [[ $# -ge 1 ]] 
+do
+key=$1
+    case $key in
+        --salt-master)
+            SALT_MASTER=$2
+            shift 
+            ;;
+        --minion-count)
+            MINION_COUNT=\"$2\"
+            shift
+            ;;
+        --flavor)
+            FLAVOR=$2
+            shift
+            ;;
+        --image-name)
+            IMAGE_NAME=$2
+            shift
+            ;;
+        --key-pair)
+            KEY_PAIR=$2
+            shift
+            ;;
+        --login-password)
+            LOGIN_PASSWORD=$2
+            shift
+            ;;
+        --login-user)
+            LOGIN_USER=$2
+            shift
+            ;;
+        --tenant-name)
+            OS_TENANT_NAME=$2
+            shift
+            ;;
+        --auth-url)
+            OS_AUTH_URL=$2
+            shift
+            ;;
+        --node-name)
+            NODE_NAME=$2
+            shift
+            ;;
+        --flavor-name-master)
+            FLAVOR_NAME_MASTER=$2
+            shift
+            ;;
+        --flavor-name-minion)
+            FLAVOR_NAME_MINION=$2
+            shift
+            ;;
+        --destroy)
+            set_defaults
+            destroy
+            shift
+            ;;
+        --output-ips)
+            output_ips 
+            ;;
+        --help) 
+            usage
+            exit 1
+            ;;
+        --)
+            usage
+            exit 1
+            ;;
+        *)
+            usage
+            exit 1
+            ;;
+    esac
+shift
+done
+
+check_requirements
+set_defaults
+
+if [ "$SALT_MASTER" ]; then
+    echo "Found a Salt-Master Ip/Hostname. Only spawning minions."
+    pushd "${CONFIGPATH}/nomaster/"
+    terraform apply $(vars_without_master)
+else
+    echo "No Salt-Master Ip provided. Spawning a new Salt-Master."
+    pushd "${CONFIGPATH}/withmaster/"
+    terraform apply $(vars_with_master)
+fi
