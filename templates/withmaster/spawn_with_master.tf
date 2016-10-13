@@ -39,8 +39,8 @@ resource "openstack_compute_instance_v2" "salt-master" {
         inline = [
         "zypper --quiet ar ${var.saltstack_repo} saltstack",
         "zypper ref",
-        "zypper --quiet --non-interactive --no-gpg-checks in salt-master",
-        "zypper --quiet --non-interactive --no-gpg-checks in salt-minion",
+        "zypper --non-interactive --no-gpg-checks in salt-master",
+        "zypper --non-interactive --no-gpg-checks in salt-minion",
         "systemctl enable salt-master.service",
         "systemctl start salt-master.service"
         ]

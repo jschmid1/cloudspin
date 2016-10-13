@@ -6,9 +6,7 @@
 
 ## Installation
 
-Add this [repo](https://build.suse.de/project/repositories/home:jschmid1) and install *cloudspin*
-
-Terraform is a dependency and will be installed(suggested) during the installation.
+Clone and execute cloudspin.
 
 ## Usage
 
@@ -69,7 +67,7 @@ The IP will be added to /etc/minion.d/minion on each node.
 
 You are limited to two sets of machines. Please keep in mind that we do not have limitless ressources.
 
-There is a --destroy switch.
+There is a --destroy switch. Use it.
 
 See --help for more options.
 

@@ -31,7 +31,7 @@ resource "openstack_compute_instance_v2" "salt-minion" {
         inline = [
         "zypper --quiet ar ${var.saltstack_repo} saltstack",
         "zypper ref",
-        "zypper --quiet --non-interactive --no-gpg-checks in salt-minion",
+        "zypper --non-interactive --no-gpg-checks in salt-minion",
         "echo master: ${var.salt_master} > /etc/salt/minion.d/minion.conf",
         "systemctl enable salt-minion.service",
         "systemctl start salt-minion.service"
